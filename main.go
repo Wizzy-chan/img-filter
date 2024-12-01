@@ -8,19 +8,10 @@ import (
 	"image/jpeg"
 	"os"
 	"io"
-	"strings"
 	"flag"
 )
 
 func UNUSED(x ...interface{}) {}
-
-type ImageFormat int
-
-const (
-	UNKNOWN ImageFormat = iota
-	PNG
-	JPEG
-)
 
 func Usage(w io.Writer) {
 	fmt.Fprintf(w, "Usage: img-filter [flags] path/to/image\n")
@@ -43,37 +34,9 @@ func Grayscale(img image.Image) image.Image {
 	return out
 }
 
-type ErrorUnknownFormat string
-
-func (err ErrorUnknownFormat) Error() string {
-	return string(err)
-}
-
-func GetImageFormat(format, inPath string) (ImageFormat, error) {
-	if format == "png" {
-		return PNG, nil
-	}
-	if format == "jpeg" || format == "jpg" {
-		return JPEG, nil
-	}
-
-	if format != "" {
-		return UNKNOWN, ErrorUnknownFormat("unknown format " + format)
-	}
-
-	if strings.HasSuffix(inPath, ".png") {
-		return PNG, nil
-	}
-	if strings.HasSuffix(inPath, ".jpg") || strings.HasSuffix(inPath, ".jpeg") {
-		return JPEG, nil
-	}
-
-	return UNKNOWN, ErrorUnknownFormat("could not work out format from file extension")
-}
-
 func main() {
 	outPath := flag.String("o", "", "The file`path` to write the resulting image to")
-	format := flag.String("f", "", "The `format` to use for encoding and decoding")
+	outFormat := flag.String("f", "", "The `format` to use for encoding the resulting image")
 	help := flag.Bool("help", false, "Show this help message")
 	flag.BoolVar(help, "h", false, "")
 	
@@ -89,24 +52,26 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: No image path provided\n")
 		os.Exit(1)
 	}
-		
-	imageFormat, err := GetImageFormat(*format, inPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %s\n", err.Error())
-		os.Exit(1)
-	}
-	
+
 	imgFile, err := os.Open(inPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Unable to open image %s: %s\n", inPath, err.Error())
 		os.Exit(1)
 	}
+
+	_, format, err := image.DecodeConfig(imgFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Unable to decode image config: %s\n", err.Error())
+		os.Exit(1)
+	}
+
+	imgFile.Seek(0, io.SeekStart)
 	
 	var img image.Image
-	if imageFormat == PNG {
+	if format == "png" {
 		img, err = png.Decode(imgFile)
 	}
-	if imageFormat == JPEG {
+	if format == "jpeg" {
 		img, err = jpeg.Decode(imgFile)
 	}
 	if err != nil {
@@ -116,17 +81,28 @@ func main() {
 	
 	grayscaleImg := Grayscale(img)
 
+	// TODO: Construct new output filepath if no output is provided with -o
+	if *outPath == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: No output filepath provided.\n")
+		os.Exit(1)
+	}
+
 	outFile, err := os.Create(*outPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Unable to open output file %s: %s\n", *outPath, err.Error())
 		os.Exit(1)
 	}
 
-	if imageFormat == PNG {
-		err = png.Encode(outFile, grayscaleImg)
+	if *outFormat != "" {
+		format = *outFormat
 	}
-	if imageFormat == JPEG {
+	if format == "png" {
+		err = png.Encode(outFile, grayscaleImg)
+	} else if format == "jpeg" {
 		err = jpeg.Encode(outFile, grayscaleImg, nil)
+	} else {
+		fmt.Fprintf(os.Stderr, "ERROR: Unknown encoding format %s.\n", format)
+		os.Exit(1)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Unable to encode output file: %s\n", err.Error())
